@@ -375,6 +375,35 @@ def test_failed_aircraft_is_preserved_in_runtime_feedback():
         server.close()
 
 
+def test_group_failure_does_not_fabricate_success_for_unconfirmed_aircraft():
+    """组级 FAILED 只声明 failed_uavs；其余机器没有终态证据，不得记为 SUCCESS。
+
+    2026-10-08 实机复盘：四机实飞 coverage 失败时，地面站按"第一台失败即中止整组"
+    上报 FAILED[failed=[A10,A13]]，runtime 把未上报终态的 A08/A12 直接合成 SUCCESS，
+    导致"A12 SUCCESS"写进实验记录（实际它当时还在 RUNNING，随后才失败）。
+    """
+    package = _package("GroupB")
+    server = MockGroundStation("GroupB", "FAILED", ["B02"]).start()
+    transport = TcpCommandTransport(package, SystemClock(), "127.0.0.1", server.port)
+    try:
+        transport.wait_until_ready()
+        transport.send_batch(_commands(package, "strike-targets"))
+        deadline = time.monotonic() + 2.0
+        feedback = []
+        while time.monotonic() < deadline:
+            feedback.extend(transport.poll_feedback())
+            if any(item.status == CommandStatus.FAILURE for item in feedback):
+                break
+            time.sleep(0.005)
+        by_robot = {item.robot_id: item for item in feedback}
+        assert by_robot["B02"].status == CommandStatus.FAILURE
+        assert by_robot["B01"].status != CommandStatus.SUCCESS
+        assert by_robot["B01"].error_code == "GROUP_FAILED_UNCONFIRMED"
+    finally:
+        transport.close()
+        server.close()
+
+
 def _start_one_shot_server(handler):
     ready = threading.Event()
     port_holder = []

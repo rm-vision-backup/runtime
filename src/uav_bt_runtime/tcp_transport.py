@@ -545,7 +545,20 @@ class TcpCommandTransport:
                         command, CommandStatus.FAILURE, error_code, error_message
                     )
                 else:
-                    self._append_feedback(command, CommandStatus.SUCCESS)
+                    # 组级 FAILED 只声明 failed_uavs——地面站按"第一台失败即中止整组"
+                    # 收口，其余机器可能仍在执行，本条消息**不含它们的终态**（对比
+                    # COMPLETED 路径强制列出 completed_uavs，见 _handle_status）。
+                    # 因此这里不能合成 SUCCESS：2026-09-22 / 09-23 两轮实机 coverage
+                    # 失败时，A10（09-22）与 A12（09-23）就是这样被写成 SUCCESS 的，
+                    # 而它们当时只是尚未上报终态。保留未确认状态并显式标注，等地面站
+                    # 补上逐机终态后才有真实结论。
+                    self._append_feedback(
+                        command,
+                        CommandStatus.RUNNING,
+                        "GROUP_FAILED_UNCONFIRMED",
+                        "group FAILED without this UAV's terminal state; "
+                        "not confirmed successful",
+                    )
 
     def _append_feedback(
         self,
