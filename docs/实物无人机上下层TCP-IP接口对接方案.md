@@ -1,5 +1,12 @@
 # A/B 组实物无人机上下层 TCP/IP 接口对接方案
 
+> 2026-10-16 文档复核：本文保留 TCP 线协议约定；固定机号/人数和航点是本仓候选包示例，
+> 不是协议硬限制或当前实飞机队。当前 Group A 的 3/4/5 机工程任务由总工作区专用 driver/配置定义，
+> 上机顺序见 [现场工作流](../../../verification/real_uav_workflow/README.md)。
+> runtime 客户端与 Group A Server 分别以 `src/uav_bt_runtime/tcp_transport.py`、
+> 总工作区 `src/tcp_to_ros/scripts/tcp_server_node.py` 为实现证据；B 组 Server 不在本工作区。
+> 本文命令统一在 runtime 子仓库根目录执行（总工作区先 `cd references/runtime`）。
+
 ## 1. 交付边界与通信关系
 
 runtime 是上层行为树（Behavior Tree，BT）任务执行程序。它根据任务树决定何时开始一项
@@ -265,6 +272,8 @@ A07-A12 全部完成退出航线后返回：
 
 ### 5.1 A 组任务批次
 
+下表只描述本仓 `examples/joint_mission/group_a` 默认候选包；改变任务包不改变 TCP 外层协议。
+
 | 单任务测试名 | 线上命令 | 参与飞机 | 地面站返回 `COMPLETED` 的条件 |
 |---|---|---|---|
 | `prepare` | `MOVE_TO` | A01-A12 | 12 架机全部到达各自目标并稳定悬停 |
@@ -302,7 +311,8 @@ A07-A12 全部完成退出航线后返回：
 
 ### 5.3 FOLLOW_ROUTE
 
-`leader_id` 必填，当前固定为 `A01`。A01 携带完整 `waypoints`，每个航点包含
+`leader_id` 必填，客户端从本批次中唯一的已配置 Leader 推导，**不固定为 A01**。
+下例使用候选包的 A01（现场三/四/五机 recon 用 A08）；领机携带完整 `waypoints`，每个航点包含
 `x/y/z/yaw`；其他参与飞机携带 `formation_follow:true`：
 
 ```json
@@ -393,6 +403,9 @@ A07-A12 全部完成退出航线后返回：
 
 B 组正常任务只有 `ATTACK` 和 `RETURN`。两条正常命令都必须同时包含且只包含 B01、B02。
 
+测试工具另有 `strike-target-b01-test`：仅允许该 plan 的 `ATTACK` 发给单独 B01；
+这是客户端实现的测试例外，不表示任意 B 组子集都可发送，也不证明外部 B 组 Server 支持。
+
 | 单任务测试名 | 线上命令 | 地面站返回 `COMPLETED` 的条件 |
 |---|---|---|
 | `strike-targets` | `ATTACK` | B01、B02 均完成前往目标、悬停和打击 |
@@ -424,7 +437,7 @@ runtime 根据任务包的目标定义，将 `target_id` 转换为目标坐标�
     {
       "uav_id": "B02",
       "target_id": "target-2",
-      "x": 85.0,
+      "x": 75.0,
       "y": 105.0,
       "z": 12.0,
       "yaw": 0.0
@@ -577,18 +590,16 @@ runtime 正常情况下不会并发发送两个任务。如果地面站正在执
 
 ## 10. 单任务联调
 
-json文件修改，更新对应has值：
+修改哪个包就刷新哪个包的哈希；修改 Group A 的 `world.json` 后不能只刷新 Group B：
 
-修改完 Group A 的 `world.json` 后，运行：
-
-```
-python3 runtime/tools/update_mission_hashes.py \
-  runtime/examples/joint_mission/group_b
+```bash
+python3 tools/update_mission_hashes.py examples/joint_mission/group_a
 ```
 
-
-
-
+这会置 `reviewed=false`，不代表已审核。任务包编辑规则见
+[候选任务包说明](../examples/joint_mission/README.md#修改和审核)。
+`task_test.py` 当前允许加载未审核包（TCP 模式也一样），实物使用前须人工复核包内容；
+运行工具成功不能代替审核。以下命令针对默认候选包；本工作区三/四/五机实飞使用各自 `verification/*_uav_recon/driver.py`。
 
 先启动对应组地面站 TCP Server，再在 runtime 电脑执行。只有一台电脑时，可以让地面站
 监听 `127.0.0.1`，并把 `--tcp-host` 设置为 `127.0.0.1`。
@@ -596,33 +607,33 @@ python3 runtime/tools/update_mission_hashes.py \
 ### 10.1 A 组
 
 ```bash
-python3 runtime/task_test.py --backend tcp --group A --task prepare \
+python3 task_test.py --backend tcp --group A --task prepare \
   --tcp-host <A组地面站IP> --tcp-port 39001
 
-python3 runtime/task_test.py --backend tcp --group A --task coverage-segment-1 \
+python3 task_test.py --backend tcp --group A --task coverage-segment-1 \
   --tcp-host <A组地面站IP> --tcp-port 39001
 
-python3 runtime/task_test.py --backend tcp --group A --task fault-exit \
+python3 task_test.py --backend tcp --group A --task fault-exit \
   --tcp-host <A组地面站IP> --tcp-port 39001
 
-python3 runtime/task_test.py --backend tcp --group A --task recovery \
+python3 task_test.py --backend tcp --group A --task recovery \
   --tcp-host <A组地面站IP> --tcp-port 39001
 
-python3 runtime/task_test.py --backend tcp --group A --task coverage-segment-2 \
+python3 task_test.py --backend tcp --group A --task coverage-segment-2 \
   --tcp-host <A组地面站IP> --tcp-port 39001
 
-python3 runtime/task_test.py --backend tcp --group A --task hold-end \
+python3 task_test.py --backend tcp --group A --task hold-end \
   --tcp-host <A组地面站IP> --tcp-port 39001
 ```
 
 ### 10.2 B 组
 
 ```bash
-python3 runtime/task_test.py --backend tcp --group B --task strike-targets \
-  --tcp-host 192.168.31.4 --tcp-port 39001
+python3 task_test.py --backend tcp --group B --task strike-targets \
+  --tcp-host <B组地面站IP> --tcp-port 39001
 
-python3 runtime/task_test.py --backend tcp --group B --task return-strike-uavs \
-  --tcp-host 192.168.31.4 --tcp-port 39001
+python3 task_test.py --backend tcp --group B --task return-strike-uavs \
+  --tcp-host <B组地面站IP> --tcp-port 39001
   
 
 ```
@@ -639,12 +650,12 @@ python3 runtime/task_test.py --backend tcp --group B --task return-strike-uavs \
 ## 11. 单组完整行为树联调
 
 ```bash
-./runtime/run_tcp.sh --package runtime/examples/joint_mission/group_a \
+bash run_tcp.sh --package examples/joint_mission/group_a \
   --tcp-host <A组地面站IP> --tcp-port 39001 \
   --auto-peer-events --allow-unreviewed
 
-./runtime/run_tcp.sh --package runtime/examples/joint_mission/group_b \
-  --tcp-host 192.168.31.4 --tcp-port 39001 \
+bash run_tcp.sh --package examples/joint_mission/group_b \
+  --tcp-host <B组地面站IP> --tcp-port 39001 \
   --auto-peer-events --allow-unreviewed
 ```
 

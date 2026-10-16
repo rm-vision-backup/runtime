@@ -3,7 +3,7 @@
 本目录是一个独立的 Python 子项目，负责无人机的高层任务运行时。它不依赖
 LLaMA-Factory、旧的场景 UI，也不依赖各组的机器人控制实现。
 
-当前实现覆盖已批准计划的第 1 至第 7 阶段：
+当前实现包括：
 
 - 无人机规格与运行时状态的严格领域模型；
 - 编组花名册与任务上下文的一致性检查；
@@ -18,21 +18,28 @@ LLaMA-Factory、旧的场景 UI，也不依赖各组的机器人控制实现。
 
 地面站的 TCP Server 与机载控制适配层由 A 组、B 组下层团队负责，不在本仓库内实现。
 
+本文所有命令均在 **runtime 子仓库根目录（本 README 所在目录）** 执行；从总工作区进入这里用
+`cd references/runtime`。通信约定见 [TCP/IP 接口](docs/实物无人机上下层TCP-IP接口对接方案.md)。本仓示例是候选任务包，
+不能等同于 31 架实飞验证；Group A 现场操作按总工作区的
+[上机工作流](../../verification/real_uav_workflow/README.md) 和对应机队专用规程执行。
+
 ## 单任务测试
 
-只执行某一个已审核任务，不跑该组其余行为树：
+只执行某个任务，不跑该组其余行为树。注意：`task_test.py` 是测试工具，当前源码用
+`require_reviewed=False` 加载任务包，**包括 TCP 模式**；能启动不表示任务包已经审核。
+默认 `memory` 后端只使用脚本化模拟结果，不验证真实飞行。
 
 ```bash
-python runtime/task_test.py --group A --task coverage-segment-1
-python runtime/task_test.py --group B --task strike-targets
+python3 task_test.py --group A --task coverage-segment-1
+python3 task_test.py --group B --task strike-targets
 ```
 
 默认的 `memory` 后端适合快速自检。要验证 TCP 线接口，先启动对应组的地面站 Server：
 
 ```bash
-python runtime/task_test.py --backend tcp --group A --task coverage-segment-1 \
+python3 task_test.py --backend tcp --group A --task coverage-segment-1 \
   --tcp-host <group-a-ground-station-ip>
-python runtime/task_test.py --backend tcp --group B --task strike-targets \
+python3 task_test.py --backend tcp --group B --task strike-targets \
   --tcp-host <group-b-ground-station-ip>
 ```
 
@@ -55,19 +62,19 @@ python runtime/task_test.py --backend tcp --group B --task strike-targets \
 省略 `--max-ticks`：
 
 ```bash
-python runtime/task_test.py --backend memory --group A --task prepare
+python3 task_test.py --backend memory --group A --task prepare
 ```
 
 覆盖任务超时（`max_ticks` 随之自动推算）：
 
 ```bash
-python runtime/task_test.py --backend memory --group A --task prepare --timeout-s 12.5
+python3 task_test.py --backend memory --group A --task prepare --timeout-s 12.5
 ```
 
 显式指定本地循环上限（覆盖自动推算）：
 
 ```bash
-python runtime/task_test.py --backend tcp --group A --task prepare-two-uav \
+python3 task_test.py --backend tcp --group A --task prepare-two-uav \
   --tcp-host <GCS_A_IP> --tcp-port 39001 --timeout-s 120 --max-ticks 2400
 ```
 
@@ -77,14 +84,14 @@ python runtime/task_test.py --backend tcp --group A --task prepare-two-uav \
 `MOVE_TO` 指令。先在无地面站的情况下校验：
 
 ```bash
-python3 runtime/task_test.py --backend memory --group A \
+python3 task_test.py --backend memory --group A \
   --task prepare-two-uav
 ```
 
 标定完成、确认已起飞并进入 OFFBOARD 后，连接 `tcp_to_ros`：
 
 ```bash
-python3 runtime/task_test.py --backend tcp --group A \
+python3 task_test.py --backend tcp --group A \
   --task prepare-two-uav \
   --tcp-host <GCS_A_IP> --tcp-port 39001 \
   --max-ticks 2400
@@ -126,32 +133,31 @@ python3 tools/update_mission_hashes.py \
 
 - 该工具**只刷新哈希**，不会修改任何被引用 JSON 的内容，也不会补齐漏登记的文件。
   新增计划文件时必须先把它写进 `mission.json` 的 `plan_files`，工具才会纳入哈希。
-- 跨组联合任务还要求两组的 `world.json` **逐字节相同**，并满足
-  `mission_id`、双方 `peer_package_version`、`target_config_version` 一致。
-  只改其中一组而不改另一组，联合校验会在 `validate_joint_packages` 处报
-  "Group packages do not share identical world configuration"。
+- 当前 `validate_joint_packages` 检查恰好一份 GroupA/GroupB、相同 `mission_id`、
+  `peer_package_version` 互指正确以及两组 UAV ID 不重叠；**已不检查**两组 world 逐字节相同、
+  跨组 `target_config_version` 相等或总机数 ≥30。每个包内部仍检查 manifest/world 的目标版本一致。
+  联合实物任务仍须人工核对双方坐标、目标和版本；静态校验通过不保证场地几何安全。
 - 另一条生成示例任务包的路径是 `tools/generate_example_mission.py`，它会直接写出
   带哈希的 `mission.json`。若手工改过示例包，注意别让两者产生分歧。
 
 ## 开发
 
-在本仓库根目录（即本目录的上级）执行：
+在 runtime 子仓库根目录执行：
 
 ```bash
-PYTHONPATH=runtime/src python -m pytest runtime/tests -q
+PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ## 传统脚本入口
 
-如果习惯 `train.py` 那样的工作流，直接进入 runtime 目录运行 `main.py`，
+直接在 runtime 子仓库根目录运行 `main.py`，
 无需安装包，也不需要设置 `PYTHONPATH`：
 
 ```bash
-cd runtime
-python main.py --mode validate --allow-unreviewed
-python main.py --mode single --auto-peer-events --allow-unreviewed
-python main.py --mode joint --scenario normal --allow-unreviewed
-python main.py --mode visual --scenario normal --allow-unreviewed
+python3 main.py --mode validate --allow-unreviewed
+python3 main.py --mode single --auto-peer-events --allow-unreviewed
+python3 main.py --mode joint --scenario normal --allow-unreviewed
+python3 main.py --mode visual --scenario normal --allow-unreviewed
 ```
 
 ## A/B 组 TCP 对接
@@ -159,15 +165,15 @@ python main.py --mode visual --scenario normal --allow-unreviewed
 每个实机运行时进程连接一个组的地面站。必须显式给出任务包，进程才无法悄悄选错组：
 
 ```bash
-./runtime/run_tcp.sh \
-  --package runtime/examples/joint_mission/group_a \
+bash run_tcp.sh \
+  --package examples/joint_mission/group_a \
   --tcp-host <group-a-ground-station-ip> \
   --tcp-port 39001 \
   --auto-peer-events \
   --allow-unreviewed
 
-./runtime/run_tcp.sh \
-  --package runtime/examples/joint_mission/group_b \
+bash run_tcp.sh \
+  --package examples/joint_mission/group_b \
   --tcp-host <group-b-ground-station-ip> \
   --tcp-port 39001 \
   --auto-peer-events \
@@ -175,15 +181,16 @@ python main.py --mode visual --scenario normal --allow-unreviewed
 ```
 
 `--auto-peer-events` 仅用于与下层隔离联调。线协议消息格式、状态机规则以及地面站
-职责见 `../docs/实物无人机上下层TCP-IP接口对接方案.md`。
+职责见 [TCP/IP 接口对接方案](docs/实物无人机上下层TCP-IP接口对接方案.md)。
+上面的 `--allow-unreviewed` 仅供候选包联调；正式实物任务须先完成现场审核，不能照抄该开关跳过审核。
 
 `visual` 模式会打开一个标准库 Tk 窗口，在配置好的 100 m × 150 m 场地内同时显示
 两组。它消费真实行为树执行器发出的指令；无人机移动完成会生成正常的指令反馈，
 从而推进行为树。用 `--headless` 可以不弹窗、只跑同一套运动学后端：
 
 ```bash
-python main.py --mode visual --scenario strike-failure --allow-unreviewed
-python main.py --mode visual --scenario normal --headless --allow-unreviewed
+python3 main.py --mode visual --scenario strike-failure --allow-unreviewed
+python3 main.py --mode visual --scenario normal --headless --allow-unreviewed
 ```
 
 可视化器是任务级的俯视仿真，不是飞行动力学、避障或 PX4 仿真器。
@@ -191,27 +198,27 @@ python main.py --mode visual --scenario normal --headless --allow-unreviewed
 校验自带的 31 机示例包：
 
 ```bash
-PYTHONPATH=runtime/src python -m uav_bt_runtime validate \
-  runtime/examples/joint_mission/group_a \
-  runtime/examples/joint_mission/group_b \
+PYTHONPATH=src python3 -m uav_bt_runtime validate \
+  examples/joint_mission/group_a \
+  examples/joint_mission/group_b \
   --allow-unreviewed
 ```
 
 跑完整联合任务：
 
 ```bash
-PYTHONPATH=runtime/src python -m uav_bt_runtime simulate-joint \
-  --group-a runtime/examples/joint_mission/group_a \
-  --group-b runtime/examples/joint_mission/group_b \
+PYTHONPATH=src python3 -m uav_bt_runtime simulate-joint \
+  --group-a examples/joint_mission/group_a \
+  --group-b examples/joint_mission/group_b \
   --allow-unreviewed
 ```
 
 演练双机打击失败场景：
 
 ```bash
-PYTHONPATH=runtime/src python -m uav_bt_runtime simulate-joint \
-  --group-a runtime/examples/joint_mission/group_a \
-  --group-b runtime/examples/joint_mission/group_b \
+PYTHONPATH=src python3 -m uav_bt_runtime simulate-joint \
+  --group-a examples/joint_mission/group_a \
+  --group-b examples/joint_mission/group_b \
   --scenario strike-failure \
   --allow-unreviewed
 ```
